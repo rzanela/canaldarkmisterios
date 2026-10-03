@@ -1,0 +1,123 @@
+{
+  "name": "Canal Dark - Geracao de Roteiro",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1,3,5"
+            }
+          ]
+        },
+        "trigger": "schedule",
+        "credentials": {}
+      },
+      "id": "trigger-roteiro",
+      "name": "Agendador (Seg/Qua/Sex 09:00)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le a fila de temas pendentes\nconst fs = require('fs');\n\nconst filaPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\fila_temas.json';\n\nlet fila = [];\nif (fs.existsSync(filaPath)) {\n  const raw = fs.readFileSync(filaPath, 'utf-8');\n  fila = JSON.parse(raw);\n}\n\n// Pega o primeiro tema nao-processado\nconst tema = fila.find(t => !t.processado);\nif (!tema) {\n  return [{ json: { error: 'Nenhum tema pendente na fila' } }];\n}\n\n// Marca como processado\ntema.processado = true;\ntema.data_processamento = new Date().toISOString();\nfs.writeFileSync(filaPath, JSON.stringify(fila, null, 2), 'utf-8');\n\nreturn [{ json: tema }];"
+      },
+      "id": "ler-fila-temas",
+      "name": "Ler Fila de Temas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Monta o prompt completo para o Gemini\nconst tema = $input.first().json;\n\nconst systemPrompt = `Voce e um roteirista profissional de documentarios de true crime para YouTube brasileiro.\nSua tarefa: criar roteiros detalhados com TOM CORRETO, ESTRUTURA DRAMATICA e INFORMACOES VERIFICAVEIS.\n\nFORMATO DE SAIDA (JSON obrigatorio):\n{\n  \"video_id\": \"string (formato: tc_AAAAMMDD_nome)\",\n  \"titulo\": \"TITULO DO VIDEO (max 90 chars, com hook)\",\n  \"tipo\": \"long_form\" | \"short\",\n  \"duracao_minutos\": number,\n  \"sinopse\": \"Resumo em 2 linhas para SEO\",\n  \"segmentos\": [\n    {\n      \"indice\": number,\n      \"titulo\": \"Titulo do bloco\",\n      \"descricao_visual\": \"Descricao densa de imagem/stock a gerar\",\n      \"tom_narrativo\": \"descreve o clima emocional\",\n      \"inicio_previsto\": \"HH:MM:SS\",\n      \"duracao_estimada_seg\": number,\n      \"nome_arquivo\": \"nome_arquivo_imagem\",\n      \"ponto_visual_importante\": \"elemento visual marcante a ser gerado\"\n    }\n  ],\n  \"musica_markers\": [{\"tempo\": \"HH:MM:SS\", \"tipo\": \"tension|release|climax|ambient\"}],\n  \"tags_seo\": [\"tag1\", \"tag2\", ...],\n  \"thumbnail_suggestion\": \"descricao detalhada para gerador de imagens\",\n  \"notas_producao\": \"observacoes tecnicas\"\n}`;\n\nconst userPrompt = `TEMA: ${tema.titulo || tema.assunto || tema}\nANGULO: ${tema.angulo || 'Documentario completo de true crime'}\nSCORE: ${tema.score || 5}/10\n\nGere o roteiro completo no JSON especificado.`;\n\nreturn [{ json: { systemPrompt, userPrompt, tema } }];"
+      },
+      "id": "montar-prompt-roteiro",
+      "name": "Montar Prompt do Roteiro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendBody": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "{\"parts\":[{\"text\":\"{{ $json.systemPrompt }}\\n\\n{{ $json.userPrompt }}\"}]}"
+            },
+            {
+              "name": "generationConfig",
+              "value": "{\"temperature\":0.7,\"maxOutputTokens\":4000}"
+            }
+          ]
+        },
+        "options": { "timeout": 60 }
+      },
+      "id": "gerar-roteiro",
+      "name": "Gerar Roteiro Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Salva o roteiro JSON no projeto correspondente\nconst fs = require('fs');\nconst path = require('path');\n\n// Extrai texto da resposta do Gemini\nconst inputJson = $input.first().json;\nconst roteiroTexto = inputJson.candidates?.[0]?.content?.parts?.[0]?.text ||\n                     inputJson.error ||\n                     JSON.stringify(inputJson);\n\n// Extrai JSON do texto\nlet roteiro;\ntry {\n  const match = roteiroTexto.match(/```json\\n?([\\s\\S]*?)\\n?```/) ||\n                roteiroTexto.match(/\\{[\\s\\S]*\\}/);\n  const jsonStr = match ? match[0].replace(/```json\\n?/, '').replace(/\\n?```$/, '') : roteiroTexto;\n  roteiro = JSON.parse(jsonStr);\n} catch(e) {\n  return [{ json: { error: 'JSON invalido do Gemini', raw: roteiroTexto.slice(0, 500) } }];\n}\n\nconst videoId = roteiro.video_id || ('tc_' + new Date().toISOString().slice(0,10).replace(/-/g,''));\nroteiro.video_id = videoId;\n\nconst projetoDir = path.join('C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\projetos', videoId);\nif (!fs.existsSync(projetoDir)) {\n  fs.mkdirSync(projetoDir, { recursive: true });\n}\n\n// Salva roteiro\nconst roteiroPath = path.join(projetoDir, `resultado_${videoId}.json`);\nfs.writeFileSync(roteiroPath, JSON.stringify(roteiro, null, 2), 'utf-8');\n\n// Atualiza historico\nconst historicoPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\historico_temas.json';\nlet historico = [];\nif (fs.existsSync(historicoPath)) {\n  historico = JSON.parse(fs.readFileSync(historicoPath, 'utf-8'));\n}\nhistorico.push({ ...roteiro, data_roteiro: new Date().toISOString() });\nfs.writeFileSync(historicoPath, JSON.stringify(historico, null, 2), 'utf-8');\n\nreturn [{ json: { ...roteiro, caminho_roteiro: roteiroPath } }];"
+      },
+      "id": "salvar-roteiro",
+      "name": "Salvar Roteiro em Arquivo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 300]
+    }
+  ],
+  "connections": {
+    "Agendador (Seg/Qua/Sex 09:00)": {
+      "main": [
+        [
+          { "node": "Ler Fila de Temas", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Ler Fila de Temas": {
+      "main": [
+        [
+          { "node": "Montar Prompt do Roteiro", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Montar Prompt do Roteiro": {
+      "main": [
+        [
+          { "node": "Gerar Roteiro Gemini", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Gerar Roteiro Gemini": {
+      "main": [
+        [
+          { "node": "Salvar Roteiro em Arquivo", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Salvar Roteiro em Arquivo": {
+      "main": [[]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "America/Sao_Paulo"
+  },
+  "staticData": null,
+  "tags": ["canal-dark", "roteiro", "automacao"],
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "templateId": "canal-dark-roteiro"
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "name": "Canal Dark - Pesquisa de Temas (News BR)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 8 * * 1,3,5" }
+          ]
+        },
+        "trigger": "schedule",
+        "credentials": {}
+      },
+      "id": "trigger-pesquisa",
+      "name": "Agendador (Seg/Qua/Sex 08:00)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "command": "=python \"C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\scripts\\\\buscador_noticias.py\" --max 30 --save",
+        "waitUntilComplete": true,
+        "timeout": 120
+      },
+      "id": "buscar-noticias",
+      "name": "Buscar Noticias (G1/UOL/R7/CNN)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le a fila de temas gerada pelo script Python\nconst fs = require('fs');\n\nconst filaPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\fila_temas.json';\n\nif (!fs.existsSync(filaPath)) {\n  return [{ json: { error: 'Fila de temas nao encontrada' } }];\n}\n\nconst fila = JSON.parse(fs.readFileSync(filaPath, 'utf-8'));\nconst pendentes = fila.filter(t => !t.processado && t.status !== 'aprovado');\n\nreturn pendentes.slice(0, 10).map(t => ({\n  json: {\n    id: t.id || t.titulo,\n    titulo: t.titulo,\n    url: t.url || '',\n    fonte: t.fonte || 'News BR',\n    descricao: t.descricao || '',\n    data_busca: t.data_busca || '',\n  }\n}));"
+      },
+      "id": "ler-fila-temas",
+      "name": "Ler Fila de Temas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Monta o prompt de classificacao para o Gemini\nconst item = $input.first().json;\n\nconst userPrompt = `Voce e um produtor de conteudo de true crime para um canal brasileiro no YouTube.\nAnalise o tema de noticia abaixo e classifique-o.\n\nTEMA: ${item.titulo}\nFONTE: ${item.fonte}\nURL: ${item.url}\nDESCRICAO: ${item.descricao || 'N/A'}\n\nCLASSIFICACAO (responda em JSON):\n{\n  \"titulo\": \"titulo revisado para impactancia (max 90 chars)\",\n  \"potencial_retencao\": 1-10,\n  \"interesse_brasileiro\": 1-10,\n  \"viabilidade_pesquisa\": 1-10,\n  \"score_total\": numero,\n  \"angulo_roteiro\": \"angulo narrativo para documentario (2 linhas)\",\n  \"aprovado\": true/false,\n  \"motivo\": \"breve justificativa da classificacao\"\n}\n\nREGRAS:\n- So aprova se score_total >= 20 E potencial_retencao >= 6\n- Escolhe angulos com drama, mistério, reviravoltas\n- Prioriza casos com forte elemento humano (vitimas, familias)\n- Ignora fatos comuns sem potencial de documentario`;\n\nreturn [{ json: { userPrompt, item } }];"
+      },
+      "id": "montar-prompt",
+      "name": "Montar Prompt de Classificacao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendBody": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "{\"parts\":[{\"text\":\"{{ $json.userPrompt }}\"}]}"
+            },
+            {
+              "name": "generationConfig",
+              "value": "{\"temperature\":0.7,\"maxOutputTokens\":800}"
+            }
+          ]
+        },
+        "options": { "timeout": 30 }
+      },
+      "id": "classificar-gemini",
+      "name": "Classificar com Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Salva resultado da classificacao no historico\nconst fs = require('fs');\nconst path = require('path');\n\nconst inputJson = $input.first().json;\nconst item = inputJson.item;\n\n// Extrai JSON da resposta do Gemini\nconst textoResposta = inputJson.candidates?.[0]?.content?.parts?.[0]?.text || '{}';\n\nlet classificacao;\ntry {\n  const match = textoResposta.match(/```json\\n?([\\s\\S]*?)\\n?```/) ||\n                textoResposta.match(/\\{[\\s\\S]*\\}/);\n  const jsonStr = match ? match[0].replace(/```json\\n?/, '').replace(/\\n?```$/, '') : textoResposta;\n  classificacao = JSON.parse(jsonStr);\n} catch(e) {\n  classificacao = { aprovado: false, motivo: 'JSON invalido do Gemini', score_total: 0 };\n}\n\n// Atualiza fila (marca como processado)\nconst filaPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\fila_temas.json';\nif (fs.existsSync(filaPath)) {\n  let fila = JSON.parse(fs.readFileSync(filaPath, 'utf-8'));\n  fila = fila.map(t => {\n    if ((t.id || t.titulo) === (item.id || item.titulo)) {\n      return { ...t, processado: true, resultado: classificacao };\n    }\n    return t;\n  });\n  fs.writeFileSync(filaPath, JSON.stringify(fila, null, 2), 'utf-8');\n}\n\n// Salva no historico se aprovado\nif (classificacao.aprovado) {\n  const historicoPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\historico_temas.json';\n  let historico = [];\n  if (fs.existsSync(historicoPath)) {\n    try { historico = JSON.parse(fs.readFileSync(historicoPath, 'utf-8')); } catch(e) {}\n  }\n  historico.push({\n    ...item,\n    ...classificacao,\n    data_classificacao: new Date().toISOString(),\n  });\n  fs.writeFileSync(historicoPath, JSON.stringify(historico, null, 2), 'utf-8');\n}\n\nreturn [{\n  json: {\n    titulo: item.titulo,\n    aprovado: classificacao.aprovado,\n    score_total: classificacao.score_total || 0,\n    angulo_roteiro: classificacao.angulo_roteiro || '',\n    motivo: classificacao.motivo || '',\n  }\n}];"
+      },
+      "id": "salvar-classificacao",
+      "name": "Salvar Classificacao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Agendador (Seg/Qua/Sex 08:00)": {
+      "main": [
+        [{ "node": "Buscar Noticias (G1/UOL/R7/CNN)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Buscar Noticias (G1/UOL/R7/CNN)": {
+      "main": [
+        [{ "node": "Ler Fila de Temas", "type": "main", "index": 0 }]
+      ]
+    },
+    "Ler Fila de Temas": {
+      "main": [
+        [{ "node": "Montar Prompt de Classificacao", "type": "main", "index": 0 }]
+      ]
+    },
+    "Montar Prompt de Classificacao": {
+      "main": [
+        [{ "node": "Classificar com Gemini", "type": "main", "index": 0 }]
+      ]
+    },
+    "Classificar com Gemini": {
+      "main": [
+        [{ "node": "Salvar Classificacao", "type": "main", "index": 0 }]
+      ]
+    },
+    "Salvar Classificacao": {
+      "main": [[]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "America/Sao_Paulo"
+  },
+  "staticData": null,
+  "tags": ["canal-dark", "pesquisa", "automacao", "news-br"],
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "templateId": "canal-dark-pesquisa-news"
+  }
+}

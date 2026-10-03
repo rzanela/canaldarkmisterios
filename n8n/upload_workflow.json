@@ -1,0 +1,144 @@
+{
+  "name": "Canal Dark - Upload e SEO",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 11 * * 2,4,6" }
+          ]
+        },
+        "trigger": "schedule",
+        "credentials": {}
+      },
+      "id": "trigger-upload",
+      "name": "Agendador (Ter/Qui/Sab 11:00)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lista videos montados e pendentes de upload\nconst fs = require('fs');\nconst path = require('path');\n\nconst outputDir = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\output';\nconst projetosDir = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\projetos';\nconst filaPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\fila_upload.json';\n\nlet filaUpload = [];\nif (fs.existsSync(filaPath)) {\n  filaUpload = JSON.parse(fs.readFileSync(filaPath, 'utf-8'));\n}\n\nconst pendentes = [];\n\nif (fs.existsSync(outputDir)) {\n  const arquivos = fs.readdirSync(outputDir).filter(f => f.endsWith('.mp4'));\n  for (const arquivo of arquivos) {\n    const videoId = arquivo.replace('video_final_', '').replace('.mp4', '');\n    const projetoDir = path.join(projetosDir, videoId);\n    const resultadoPath = path.join(projetoDir, `resultado_${videoId}.json`);\n\n    if (fs.existsSync(resultadoPath) && !filaUpload.includes(videoId)) {\n      const result = JSON.parse(fs.readFileSync(resultadoPath, 'utf-8'));\n      pendentes.push({\n        json: {\n          video_id: videoId,\n          caminho_video: path.join(outputDir, arquivo),\n          roteiro: result,\n        }\n      });\n    }\n  }\n}\n\nreturn pendentes.length > 0 ? pendentes : [{ json: { error: 'Nenhum video pendente de upload' } }];"
+      },
+      "id": "listar-videos-pendentes",
+      "name": "Listar Videos Pendentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gera metadata SEO para o video\nconst video = $input.first().json;\nconst roteiro = video.roteiro;\n\nconst titulo = roteiro?.titulo || `Caso INEDITO que ninguém mostrou!`;\nconst sinopse = roteiro?.sinopse || '';\n\nconst userPrompt = `Voce e um especialista em SEO para YouTube brasileiro. Gere descrições e tags otimizadas para vídeos de true crime.\n\nREGRAS:\n- Titulo: max 90 chars, com hook emocional, números, palavras de impacto\n- Descricao: 250-300 words, inclui hooks, perguntas, CTAs, timestamps, links\n- Tags: 15-20 tags, misturando genéricas e específicas de alto volume\n- Formato: JSON { titulo_optimizado, descricao_completa, tags, timestamps }\n\nTítulo original: ${titulo}\nSinopse: ${sinopse}\nSegmentos: ${JSON.stringify((roteiro?.segmentos || []).slice(0,5).map(s => s.titulo))}\nThumbnail suggestion: ${roteiro?.thumbnail_suggestion || ''}\n\nGere o JSON de SEO completo.`;\n\nreturn [{ json: { userPrompt, video } }];"
+      },
+      "id": "preparar-seo",
+      "name": "Preparar Prompt SEO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendBody": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "{\"parts\":[{\"text\":\"{{ $json.userPrompt }}\"}]}"
+            },
+            {
+              "name": "generationConfig",
+              "value": "{\"temperature\":0.6,\"maxOutputTokens\":1500}"
+            }
+          ]
+        },
+        "options": { "timeout": 30 }
+      },
+      "id": "gerar-seo-gemini",
+      "name": "Gerar SEO com Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai SEO da resposta do Gemini e prepara upload\nconst fs = require('fs');\nconst path = require('path');\n\nconst inputJson = $input.first().json;\nconst video = inputJson.video;\n\n// Extrai texto da resposta do Gemini\nconst seoTexto = inputJson.candidates?.[0]?.content?.parts?.[0]?.text ||\n                 JSON.stringify(inputJson);\n\nlet seo;\ntry {\n  const match = seoTexto.match(/```json\\n?([\\s\\S]*?)\\n?```/) ||\n                seoTexto.match(/\\{[\\s\\S]*\\}/);\n  const jsonStr = match ? match[0].replace(/```json\\n?/, '').replace(/\\n?```$/, '') : seoTexto;\n  seo = JSON.parse(jsonStr);\n} catch(e) {\n  seo = {\n    titulo_optimizado: video.caminho_video.split('\\\\').pop().replace('.mp4',''),\n    descricao_completa: '',\n    tags: ['true crime', 'caso', 'brasil']\n  };\n}\n\nconst videoId = video.video_id;\nconst videoPath = video.caminho_video;\n\nreturn [{\n  json: {\n    video_id: videoId,\n    video_path: videoPath,\n    seo: seo,\n    status: 'pronto_para_upload',\n    script_upload: `python \"C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\scripts\\\\youtube_service.py\" upload \"${videoPath}\" --title \"${(seo.titulo_optimizado || '').replace(/\"/g,'\\\\\"')}\" --description \"${(seo.descricao_completa || '').replace(/\"/g,'\\\\\"')}\" --tags '${JSON.stringify(seo.tags || []).replace(/\"/g,\"'\"}}`\n  }\n}];"
+      },
+      "id": "preparar-upload",
+      "name": "Preparar Upload YouTube",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 300]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.script_upload }}",
+        "waitUntilComplete": true,
+        "timeout": 600
+      },
+      "id": "executar-upload",
+      "name": "Executar Upload (Python)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1160, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Registra upload na fila e atualiza historico\nconst fs = require('fs');\nconst path = require('path');\n\nconst video = $input.first().json;\nconst videoId = video.video_id;\nconst filaPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\fila_upload.json';\nconst historicoPath = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\dados\\\\historico_upload.json';\n\nlet fila = [];\nif (fs.existsSync(filaPath)) fila = JSON.parse(fs.readFileSync(filaPath, 'utf-8'));\nif (!fila.includes(videoId)) fila.push(videoId);\nfs.writeFileSync(filaPath, JSON.stringify(fila, null, 2));\n\nlet historico = [];\nif (fs.existsSync(historicoPath)) historico = JSON.parse(fs.readFileSync(historicoPath, 'utf-8'));\nhistorico.push({\n  video_id: videoId,\n  data_upload: new Date().toISOString(),\n  status: video.status || 'uploaded'\n});\nfs.writeFileSync(historicoPath, JSON.stringify(historico, null, 2));\n\nreturn [{ json: { video_id: videoId, status: 'uploaded', data: new Date().toISOString() } }];"
+      },
+      "id": "registrar-upload",
+      "name": "Registrar Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 300]
+    }
+  ],
+  "connections": {
+    "Agendador (Ter/Qui/Sab 11:00)": {
+      "main": [
+        [{ "node": "Listar Videos Pendentes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Listar Videos Pendentes": {
+      "main": [
+        [{ "node": "Preparar Prompt SEO", "type": "main", "index": 0 }]
+      ]
+    },
+    "Preparar Prompt SEO": {
+      "main": [
+        [{ "node": "Gerar SEO com Gemini", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gerar SEO com Gemini": {
+      "main": [
+        [{ "node": "Preparar Upload YouTube", "type": "main", "index": 0 }]
+      ]
+    },
+    "Preparar Upload YouTube": {
+      "main": [
+        [{ "node": "Executar Upload (Python)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Executar Upload (Python)": {
+      "main": [
+        [{ "node": "Registrar Upload", "type": "main", "index": 0 }]
+      ]
+    },
+    "Registrar Upload": {
+      "main": [[]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "America/Sao_Paulo"
+  },
+  "staticData": null,
+  "tags": ["canal-dark", "upload", "seo", "automacao"],
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "templateId": "canal-dark-upload"
+  }
+}

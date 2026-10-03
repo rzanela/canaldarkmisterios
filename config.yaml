@@ -1,0 +1,135 @@
+# ============================================================
+# Canal Dark - Configuração Geral do Projeto
+# ============================================================
+
+projeto:
+  nome: "Canal Dark Brasil"
+  versao: "1.0.0"
+  nicho: "true_crime_brasileiro"
+  sub_nicho: "crimes_reais_brasileiros"
+  idioma: "pt-BR"
+  fuso_horario: "America/Sao_Paulo"
+
+# ----------------------------------------------------------
+# Configurações de Produção de Vídeo
+# ----------------------------------------------------------
+video:
+  duracao_minima_minutos: 10
+  duracao_maxima_minutos: 20
+  duracao_short_segundos: 59
+  resolucao: "1920x1080"
+  fps: 30
+  formato: "mp4"
+  codec: "h264"
+
+  estrutura:
+    gancho_segundos: 15
+    contexto_segundos: 45
+    encerramento_segundos: 30
+
+  paleta_cores:
+    fundo: "#0a0a0f"
+    texto_principal: "#ffffff"
+    texto_secundario: "#f0e68c"
+    acento: "#8b0000"
+    destaque: "#c9a227"
+
+  musica:
+    tipo: "tensa_atmosferica"
+    volume_musica: 0.15
+    volume_narracao: 0.85
+
+# ----------------------------------------------------------
+# Configurações de Roteirização
+# ----------------------------------------------------------
+roteiro:
+  estilo: "narrativa_investigativa"
+  tom_voz: "grave_sério"
+  temperatura_openai: 0.7
+  max_tokens_roteiro: 2000
+
+  ganchos_validos:
+    - "O caso começou quando..."
+    - "Ninguém esperava que..."
+    - "A polícia nunca imaginou que..."
+    - "O detalhe que ninguém percebeu..."
+    - "O que levou X anos para ser revelado..."
+
+  palavras_chave_boicot:
+    - "spam"
+    - "clickbait"
+    - "curta e inscreva-se"
+
+# ----------------------------------------------------------
+# Configurações de SEO
+# ----------------------------------------------------------
+seo:
+  titulo_template: "O Caso de {nome} que {gancho} | Caso Real"
+  descricao_template: |
+    Neste vídeo, contamos a história de {nome} que {resumo}.
+    Um caso que comoveu o Brasil e intriga investigadores até hoje.
+
+    📌 O que você vai aprender:
+    {pontos_chave}
+
+    ⏱️ Timestamps:
+    {timestamps}
+
+    #casoreals #truecrime #mistério #brasil #{sub_nicho}
+
+  tags_base:
+    - caso real
+    - crime brasil
+    - mistério resolvido
+    - investigação
+    - polícia
+    - true crime
+    - crime sem solução
+    - mistério brasil
+
+  num_tags: 20
+
+# ----------------------------------------------------------
+# Configurações de Upload
+# ----------------------------------------------------------
+upload:
+  agenda:
+    segunda: "16:00"
+    quarta: "16:00"
+    sexta: "16:00"
+    sabado: "14:00"
+
+  playlist_longos: "Crimes Brasileiros"
+  playlist_shorts: "Shorts - Casos Resumidos"
+
+  cards:
+    video_anterior: true
+    playlist: true
+    subscribe: true
+
+# ----------------------------------------------------------
+# Monitoramento e Alertas
+# ----------------------------------------------------------
+monitoramento:
+  verificar_metricas_dias: [1, 3, 5]
+  threshold_views_minimo: 100
+  threshold_ctr_minimo: 0.03
+  threshold_retencao_minima: 0.50
+
+  alertas:
+    - tipo: "metricas_baixas"
+      acao: "gerar_relatorio"
+    - tipo: "novo_video_viral"
+      acao: "notificar_whatsapp"
+    - tipo: "strike"
+      acao: "notificar_urgente"
+
+# ----------------------------------------------------------
+# Cronograma de Execução
+# ----------------------------------------------------------
+automacao:
+  pesquisa_diaria: "08:00"
+  roteirizacao: "09:00"
+  producao: "10:00"
+  upload: "15:00"
+  relatorio_semanal: "domingo 20:00"

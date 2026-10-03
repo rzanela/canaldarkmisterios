@@ -1,0 +1,123 @@
+{
+  "name": "Canal Dark - Pipeline de Producao",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 10 * * 1,3,5" }
+          ]
+        },
+        "trigger": "schedule",
+        "credentials": {}
+      },
+      "id": "trigger-producao",
+      "name": "Agendador (Seg/Qua/Sex 10:00)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lista projetos pendentes de producao (sem imagens/audio)\nconst fs = require('fs');\nconst path = require('path');\n\nconst projetosDir = 'C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\projetos';\nif (!fs.existsSync(projetosDir)) return [];\n\nconst pastas = fs.readdirSync(projetosDir).filter(n =>\n  fs.statSync(path.join(projetosDir, n)).isDirectory()\n);\n\nconst pendentes = [];\nfor (const pasta of pastas) {\n  const resultadoPath = path.join(projetosDir, pasta, `resultado_${pasta}.json`);\n  const imagensDir = path.join(projetosDir, pasta, 'imagens');\n  const audioDir = path.join(projetosDir, pasta, 'audio');\n\n  if (fs.existsSync(resultadoPath)) {\n    const result = JSON.parse(fs.readFileSync(resultadoPath, 'utf-8'));\n    const precisaGerar = !fs.existsSync(imagensDir) ||\n                         !fs.existsSync(audioDir) ||\n                         (fs.existsSync(imagensDir) && fs.readdirSync(imagensDir).length === 0);\n    if (precisaGerar) {\n      pendentes.push({ json: { video_id: pasta, resultado: result } });\n    }\n  }\n}\n\nreturn pendentes.length > 0 ? pendentes : [{ json: { error: 'Nenhum projeto pendente de producao' } }];"
+      },
+      "id": "listar-projetos-pendentes",
+      "name": "Listar Projetos Pendentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "command": "=python \"C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\scripts\\\\gerador_imagens.py\" \"{{ $json.video_id }}\"",
+        "waitUntilComplete": true,
+        "timeout": 600
+      },
+      "id": "gerar-imagens",
+      "name": "Gerar Imagens (Gemini)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "command": "=python \"C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\scripts\\\\narrador.py\" \"{{ $json.video_id }}\"",
+        "waitUntilComplete": true,
+        "timeout": 600
+      },
+      "id": "gerar-narracao",
+      "name": "Gerar Narracao (gTTS)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifica se todos os assets estao prontos\nconst fs = require('fs');\nconst path = require('path');\n\nconst input = $input.first().json;\nconst videoId = input.video_id;\n\nconst audioDir = path.join('C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\projetos', videoId, 'audio');\nconst imagemDir = path.join('C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\projetos', videoId, 'imagens');\n\nconst audios = fs.existsSync(audioDir) ? fs.readdirSync(audioDir) : [];\nconst imagens = fs.existsSync(imagemDir) ? fs.readdirSync(imagemDir) : [];\n\nconst resultadoPath = path.join('C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\projetos', videoId, `resultado_${videoId}.json`);\nconst roteiro = JSON.parse(fs.readFileSync(resultadoPath, 'utf-8'));\nconst totalSegmentos = (roteiro.segmentos || []).length;\n\nconst audiosProntos = audios.filter(f => f.endsWith('.mp3')).length;\nconst imagensProntas = imagens.filter(f => f.match(/\\.(png|jpg|jpeg)$/i)).length;\n\nreturn [{\n  json: {\n    video_id: videoId,\n    status: 'pronto_para_montagem',\n    audios_gerados: audiosProntos,\n    imagens_geradas: imagensProntas,\n    total_segmentos: totalSegmentos,\n    pronto: imagensProntas >= totalSegmentos,\n    comando_montagem: `python \"C:\\\\Meu Drive\\\\IA\\\\Canal Dark\\\\canal-dark\\\\scripts\\\\montador_video.py\" \"${videoId}\"`\n  }\n}];"
+      },
+      "id": "verificar-prontidao",
+      "name": "Verificar Prontidao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.comando_montagem }}",
+        "waitUntilComplete": true,
+        "timeout": 1800
+      },
+      "id": "executar-montagem",
+      "name": "Executar Montagem de Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [940, 300]
+    }
+  ],
+  "connections": {
+    "Agendador (Seg/Qua/Sex 10:00)": {
+      "main": [
+        [
+          { "node": "Listar Projetos Pendentes", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Listar Projetos Pendentes": {
+      "main": [
+        [
+          { "node": "Gerar Imagens (Gemini)", "type": "main", "index": 0 },
+          { "node": "Gerar Narracao (gTTS)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Gerar Imagens (Gemini)": {
+      "main": [
+        [{ "node": "Verificar Prontidao", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gerar Narracao (gTTS)": {
+      "main": [
+        [{ "node": "Verificar Prontidao", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verificar Prontidao": {
+      "main": [
+        [{ "node": "Executar Montagem de Video", "type": "main", "index": 0 }]
+      ]
+    },
+    "Executar Montagem de Video": {
+      "main": [[]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "America/Sao_Paulo"
+  },
+  "staticData": null,
+  "tags": ["canal-dark", "producao", "automacao"],
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "templateId": "canal-dark-producao"
+  }
+}
