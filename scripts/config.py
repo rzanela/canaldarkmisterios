@@ -52,6 +52,14 @@ class Config:
     PROJETOS_DIR = BASE_DIR / "projetos"
     TEMPLATES_DIR = BASE_DIR / "templates"
     DADOS_DIR = BASE_DIR / "dados"
+
+    # FFmpeg
+    FFMPEG_PATH = BASE_DIR / "scripts" / "ffmpeg.exe"
+    if not FFMPEG_PATH.exists():
+        # Tentar PATH do sistema
+        import shutil
+        ffmpeg_system = shutil.which("ffmpeg")
+        FFMPEG_PATH = Path(ffmpeg_system) if ffmpeg_system else ""
     
     @classmethod
     def get_projeto_dir(cls, nome_caso: str) -> Path:

@@ -167,25 +167,49 @@ class Narrador:
             return False
     
     def _concatenar_audios(self, arquivos: List[str], output_path: Path):
-        """Concatena múltiplos áudios em um só (usando pydub ou FFmpeg)."""
+        """Concatena múltiplos áudios em um só usando FFmpeg."""
+        import subprocess
+
+        arquivos_existentes = [f for f in arquivos if Path(f).exists()]
+        if not arquivos_existentes:
+            log.error("Nenhum arquivo de audio para concatenar")
+            return
+
+        # Se só um arquivo, copia diretamente
+        if len(arquivos_existentes) == 1:
+            import shutil
+            shutil.copy(arquivos_existentes[0], output_path)
+            log.info(f"Audio unico copiado: {output_path}")
+            return
+
+        # Cria arquivo de lista para FFmpeg
+        lista_path = output_path.with_suffix(".txt")
+        with open(lista_path, "w", encoding="utf-8") as f:
+            for arq in arquivos_existentes:
+                f.write(f"file '{arq}'\n")
+
         try:
-            # Tenta usar moviepy
-            from moviepy.editor import AudioFileClip, concatenate_audioclips
-            
-            clips = [AudioFileClip(f) for f in arquivos if Path(f).exists()]
-            if clips:
-                audio_final = concatenate_audioclips(clips)
-                audio_final.write_audiofile(str(output_path), logger=None)
-                log.info(f"Áudio completo gerado: {output_path}")
-                
-        except ImportError:
-            # Fallback: copia o primeiro arquivo como "completo"
-            if arquivos and Path(arquivos[0]).exists():
+            result = subprocess.run([
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(lista_path), "-c", "copy",
+                str(output_path)
+            ], capture_output=True, text=True, timeout=60)
+
+            if result.returncode == 0:
+                log.info(f"Audio completo gerado: {output_path}")
+            else:
+                log.warning(f"FFmpeg concat falhou: {result.stderr[:200]}")
+                # Fallback: copia o primeiro
                 import shutil
-                shutil.copy(arquivos[0], output_path)
-                log.warning("Concatenação não disponível - usando primeiro segmento")
+                shutil.copy(arquivos_existentes[0], output_path)
+
         except Exception as e:
-            log.error(f"Erro ao concatenar áudios: {e}")
+            log.error(f"Erro ao concatenar audios: {e}")
+            import shutil
+            shutil.copy(arquivos_existentes[0], output_path)
+        finally:
+            if lista_path.exists():
+                lista_path.unlink()
     
     def _estimar_duracao(self, texto: str) -> int:
         """Estima duração em segundos baseado no número de palavras."""
@@ -205,7 +229,7 @@ def main():
     
     roteiro_path = Path(args.roteiro)
     if not roteiro_path.exists():
-        print(f"❌ Roteiro não encontrado: {roteiro_path}")
+        print(f"[ERRO] Roteiro nao encontrado: {roteiro_path}")
         return
     
     # Determina diretório do projeto
@@ -217,12 +241,12 @@ def main():
     resultado = narrador.narrar_roteiro(roteiro_path, voz=args.voz)
     
     if resultado["sucesso"]:
-        print(f"\n✅ Narração concluída!")
-        print(f"   Áudio completo: {resultado['audio_completo']}")
+        print(f"\n[SUCESSO] Narracao concluida!")
+        print(f"   Audio completo: {resultado['audio_completo']}")
         print(f"   Segmentos: {len(resultado['segmentos'])}")
         print(f"   Provedor: {resultado['provedor']}")
     else:
-        print(f"❌ Erro: {resultado.get('erro')}")
+        print(f"[ERRO]: {resultado.get('erro')}")
     
     return resultado
 

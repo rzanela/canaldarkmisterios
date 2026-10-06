@@ -37,7 +37,8 @@ canal-dark/
 │   ├── roteirizador.py      # Phase 2: roteiro JSON com timecodes
 │   ├── narrador.py          # Phase 3: ElevenLabs / gTTS → áudio
 │   ├── gerador_imagens.py   # Phase 4: DALL-E 3 / Imagen 3 → imagens
-│   ├── montador_video.py    # Phase 5: FFmpeg → MP4 final
+│   ├── gerador_video_ia.py  # Phase 5A: MiniMax via mcode-tools → vídeo AI
+│   ├── montador_video.py    # Phase 5B: FFmpeg → MP4 final (fallback)
 │   ├── seo_gerador.py       # Phase 6: metadata SEO (título, tags, descrição)
 │   ├── orquestrador.py      # Orquestrador completo (sem n8n)
 │   ├── agendar_tarefas.py   # Cria tarefas no Windows Task Scheduler
@@ -207,6 +208,29 @@ python scripts/gerador_imagens.py "tc_20240315_caso_x"
 python scripts/montador_video.py "tc_20240315_caso_x"
 python scripts/seo_gerador.py --tema "Caso X" --roteiro projetos/tc_xxx/roteiro.json
 ```
+
+### Opção D: Pipeline de Vídeo por IA (MiniMax — sem encoding local)
+
+> **NOVO!** Geração de vídeo 100% na nuvem via MiniMax (mcode-tools). Não precisa de FFmpeg local nem GPU.
+> Indicado quando o PC não consegue codificar vídeos localmente.
+
+```bash
+# Gera vídeo completo: imagem de capa → clipes → concatenação → narração
+python scripts/orquestrador.py --fase videoia --video-id "tc_20240315_caso_x" --modelo MiniMax-H3-Max --clipes 4
+
+# Ou diretamente:
+python scripts/gerador_video_ia.py --projeto projetos/tc_20240315_caso_x --modelo MiniMax-H3-Max --clipes 4
+```
+
+**Modelos disponíveis:**
+- `MiniMax-H3-Max` — rápido (~20s), 480P/768P, keyframes only, com áudio nativo
+- `MiniMax-H3` — alta qualidade (~15-30min), 768P/2K, com áudio nativo
+- `MiniMax-Hailuo-2.3` — econômico, 768P/1080P, silencioso (precisa narração separada)
+
+**Escolha o modelo ideal:**
+- Precisa de resultado rápido + com áudio? → `MiniMax-H3-Max`
+- Quer máxima qualidade e tempo? → `MiniMax-H3`
+- Quer economy + já tem narração? → `MiniMax-Hailuo-2.3`
 
 ### Modo Demo (sem APIs configuradas)
 

@@ -157,20 +157,17 @@ def gerar_clipe_segmento(
 
     efeito: 'kenburns' | 'estatico' | 'pan'
     """
+    from PIL import Image as PILImage
+
     if not caminho_imagem.exists():
         logger.warning(f"Imagem não encontrada: {caminho_imagem}, usando placeholder")
         # Cria placeholder escuro
-        img = Image.new("RGB", (1920, 1080), (13, 13, 13))
+        img = PILImage.new("RGB", (1920, 1080), (13, 13, 13))
         img.save(caminho_imagem)
 
-    zoom_inicial_str = f"{zoom_inicial:.3f}"
-    # Ken Burns: zoom progressivo + pan leve
-    zoom_tempo = f"zoompan=z='min(zoom_in+zoom_delta, {zoom_final:.3f})':d={int(duracao*30)}:s=1920x1080"
-
-    # Filtros de vídeo
+    # Filtros de vídeo - versão leve (sem zoompan lento)
     vf_parts = [
         f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-        f"'{zoom_tempo}'",
         f"fade=t=in:st=0:d={fade_duration}:alpha=1",
         f"fade=t=out:st={duracao - fade_duration}:d={fade_duration}:alpha=1",
     ]
@@ -186,8 +183,8 @@ def gerar_clipe_segmento(
         "-t", str(duracao),
         "-vf", vf,
         "-af", af,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "h264_qsv", "-preset", "veryfast", "-crf", "26",
+        "-c:a", "aac", "-b:a", "128k",
         "-shortest",
         "-movflags", "+faststart",
         str(caminho_saida),
@@ -195,7 +192,7 @@ def gerar_clipe_segmento(
 
     logger.debug(f"FFmpeg cmd: {' '.join(cmd)}")
     result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=int(duracao) + 30,
+        cmd, capture_output=True, text=True, timeout=300,
     )
     if result.returncode != 0:
         logger.error(f"FFmpeg erro:\n{result.stderr[-1000:]}")
@@ -225,8 +222,8 @@ def concatenar_clipes(
     cmd_concat = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", str(nome_lista),
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "h264_qsv", "-preset", "veryfast", "-crf", "26",
+        "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         str(tmp_sem_musica),
     ]
@@ -290,8 +287,8 @@ def gerar_intro(
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", str(duracao),
         "-vf", "scale=1920:1080,fade=t=in:st=0:d=1.0",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "h264_qsv", "-preset", "veryfast", "-crf", "26",
+        "-c:a", "aac", "-b:a", "128k",
         "-shortest",
         "-movflags", "+faststart",
         str(caminho_saida),

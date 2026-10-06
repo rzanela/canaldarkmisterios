@@ -271,6 +271,62 @@ class Orquestrador:
             log.error(f"❌ Erro no upload: {e}")
             return {"sucesso": False, "fase": "upload", "erro": str(e)}
 
+    # ─── FASE 3B: Produção por IA (MiniMax) ────────────────────────────
+
+    def fase_videoia(self, video_id: str = None, modelo: str = "MiniMax-H3-Max",
+                     num_clipes: int = 4) -> dict:
+        """Produz vídeo usando IA (MiniMax via mcode-tools) — sem encoding local."""
+        log.info("=" * 60)
+        log.info("FASE 3B: PRODUÇÃO POR IA — MINIMAX")
+        log.info("=" * 60)
+
+        # Se não指定 video_id, busca o mais antigo pendente
+        if not video_id:
+            video_id = self._buscar_projeto_pendente()
+            if not video_id:
+                log.warning("Nenhum projeto pendente de produção")
+                return {"sucesso": False, "fase": "videoia", "erro": "sem projetos pendentes"}
+
+        projeto_dir = self.projetos_dir / video_id
+        if not projeto_dir.exists():
+            log.error(f"Projeto não encontrado: {video_id}")
+            return {"sucesso": False, "fase": "videoia", "erro": "projeto não encontrado"}
+
+        roteiro_path = projeto_dir / "roteiro.json"
+        if not roteiro_path.exists():
+            roteiro_path = projeto_dir / f"resultado_{video_id}.json"
+
+        if not roteiro_path.exists():
+            log.error(f"Roteiro não encontrado: {video_id}")
+            return {"sucesso": False, "fase": "videoia", "erro": "roteiro não encontrado"}
+
+        log.info(f"Projetando: {video_id} | Modelo: {modelo} | Clipes: {num_clipes}")
+
+        try:
+            from gerador_video_ia import GeradorVideoIA
+            gerador = GeradorVideoIA(
+                projeto_path=str(projeto_dir),
+                modelo_video=modelo,
+                duracao_clip=5,
+                num_clipes=num_clipes
+            )
+            resultado = gerador.pipeline_completo(roteiro_path=str(roteiro_path))
+
+            if resultado.get("sucesso"):
+                log.info(f"✅ Vídeo IA gerado: {resultado.get('video_final')}")
+                return {
+                    "sucesso": True,
+                    "fase": "videoia",
+                    "video_id": video_id,
+                    "resultado": resultado
+                }
+            else:
+                log.error(f"❌ Produção IA falhou: {resultado.get('erros')}")
+                return {"sucesso": False, "fase": "videoia", "erro": resultado.get("erros")}
+        except Exception as e:
+            log.error(f"❌ Erro na produção IA: {e}")
+            return {"sucesso": False, "fase": "videoia", "erro": str(e)}
+
     # ─── Pipeline Completo ────────────────────────────────────────────────
 
     def fase_completo(self) -> dict:
@@ -296,11 +352,11 @@ class Orquestrador:
 
         video_id = res_roteiro.get("video_id")
 
-        # 3. Produção
-        res_producao = self.fase_producao(video_id)
+        # 3. Produção por IA (MiniMax)
+        res_producao = self.fase_videoia(video_id)
         resultados["producao"] = res_producao
         if not res_producao.get("sucesso"):
-            log.warning("Produção falhou, continuando se possível...")
+            log.warning("Produção IA falhou, continuando se possível...")
 
         # 4. Upload
         res_upload = self.fase_upload(video_id)
@@ -421,10 +477,15 @@ class Orquestrador:
 def main():
     parser = argparse.ArgumentParser(description="Orquestrador Canal Dark")
     parser.add_argument("--fase", type=str, required=True,
-                        choices=["pesquisa", "roteiro", "producao", "upload", "completo", "continua", "status"],
+                        choices=["pesquisa", "roteiro", "producao", "upload", "completo", "continua", "status", "videoia"],
                         help="Fase do pipeline a executar")
     parser.add_argument("--video-id", type=str, default=None,
                         help="Video ID específico (para fases de produção/upload)")
+    parser.add_argument("--modelo", type=str, default="MiniMax-H3-Max",
+                        choices=["MiniMax-H3-Max", "MiniMax-H3", "MiniMax-Hailuo-2.3"],
+                        help="Modelo de vídeo IA (para fase videoia)")
+    parser.add_argument("--clipes", type=int, default=4,
+                        help="Número de clipes (para fase videoia)")
     parser.add_argument("--log", type=str, default="info",
                         choices=["debug", "info", "warning", "error"],
                         help="Nível de log")
@@ -448,8 +509,11 @@ def main():
 
     # Executa fase
     metodo = getattr(orch, f"fase_{args.fase}")
-    if args.fase in ("producao", "upload"):
-        resultado = metodo(args.video_id)
+    if args.fase in ("producao", "upload", "videoia"):
+        if args.fase == "videoia":
+            resultado = metodo(args.video_id, args.modelo, args.clipes)
+        else:
+            resultado = metodo(args.video_id)
     else:
         resultado = metodo()
 
